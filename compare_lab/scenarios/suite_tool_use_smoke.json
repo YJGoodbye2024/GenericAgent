@@ -1,0 +1,20 @@
+{
+  "agents": [
+    {
+      "id": "generic",
+      "label": "GenericAgent",
+      "source_dir": "GenericAgent"
+    },
+    {
+      "id": "lin_daiyu",
+      "label": "GenericAgent_LDY",
+      "source_dir": "GenericAgent_LDY"
+    }
+  ],
+  "scenario_files": [
+    "tool/local_memory_paths_probe.json",
+    "tool/local_structure_boundary_probe.json",
+    "tool/web_official_doc_probe.json",
+    "tool/hybrid_local_web_probe.json"
+  ]
+}

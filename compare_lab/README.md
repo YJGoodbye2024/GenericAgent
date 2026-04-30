@@ -34,6 +34,12 @@ python -m compare_lab run --run-id smoke --llm-no 0
 python -m compare_lab run --run-id smoke-mini --llm-no 0 --only repo_memory_probe,file_world_intro
 ```
 
+运行工具使用过程 smoke：
+
+```bash
+python -m compare_lab run --run-id tool-smoke --llm-no 0 --suite compare_lab/scenarios/suite_tool_use_smoke.json
+```
+
 重生成报告：
 
 ```bash

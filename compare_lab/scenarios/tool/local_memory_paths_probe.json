@@ -1,0 +1,10 @@
+{
+  "id": "local_memory_paths_probe",
+  "title": "本地记忆入口与文件检索",
+  "dimension": "tool_use",
+  "mode": "prompt_probe",
+  "prompts": [
+    "请先在你当前目录里自行检索，不许只凭印象作答。找出 1 个工程技能 SOP 文件、1 个 relation 文件、1 个 motif 文件。必须给出 3 个真实路径，并且每个文件都要引用一句你刚读到的关键内容，再解释它各自负责什么。",
+    "如果我现在要你判断『与宝玉关系的长期判断』，你会先读哪个入口文件，再读哪个 relation 文件，最后补读哪个 supporting episode？请按你真实检索的顺序回答，并给出真实路径。"
+  ]
+}

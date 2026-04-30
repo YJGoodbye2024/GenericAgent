@@ -1,0 +1,10 @@
+{
+  "id": "hybrid_local_web_probe",
+  "title": "本地结构 + 外网概念混合探针",
+  "dimension": "tool_use",
+  "mode": "prompt_probe",
+  "prompts": [
+    "先在本地找出 compare_lab 里五子棋 live 模式的 CLI 子命令定义在哪个真实文件里，再用外网找一个权威资料说明 SSE（Server-Sent Events）是单向还是双向推送。最后分两条给我：一条写本地证据路径，一条写外网来源链接和结论。",
+    "如果你要向一个工程师解释这个 live 页面为什么适合实时观战而不是让 agent 自己看截图，你会怎么用『本地代码证据 + 外网概念证据』各给一句支持？"
+  ]
+}
