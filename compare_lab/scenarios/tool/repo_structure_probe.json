@@ -1,0 +1,10 @@
+{
+  "id": "repo_structure_probe",
+  "title": "原生结构比较探针",
+  "dimension": "tool_use",
+  "mode": "prompt_probe",
+  "prompts": [
+    "请在你自己的目录里分别找出一个 episode 文件、一个 relation 文件、一个 motif 文件，并解释它们为什么不应该互相替代。必须引用真实路径。",
+    "如果只允许继续加厚一种记忆文件，你认为最该优先加厚哪一类？请给出基于你真实文件结构的理由。"
+  ]
+}

@@ -1,0 +1,74 @@
+temp/
+tmp/
+
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+.streamlit/
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+
+*.log
+.env
+auth.json
+model_responses.txt
+
+# Sensitive files (API keys, credentials)
+mykey.py
+
+tasks/
+
+*.zip
+
+memory/*
+!memory/memory_management_sop.md
+!memory/global_mem.txt
+!memory/global_mem_insight.txt
+!memory/episodes/
+!memory/episodes/**
+!memory/relations/
+!memory/relations/**
+!memory/motifs/
+!memory/motifs/**
+!memory/skills/
+!memory/skills/**
+
+# L4 session archiver (only the script, not archives)
+!memory/L4_raw_sessions/
+memory/L4_raw_sessions/*
+!memory/L4_raw_sessions/compress_session.py
+!memory/L4_raw_sessions/canon_reading/
+!memory/L4_raw_sessions/canon_reading/**
+!memory/L4_raw_sessions/canon_evidence/
+!memory/L4_raw_sessions/canon_evidence/**
+
+# Visual Studio
+.vs/
+restore_commit.txt
+
+sche_tasks/
+# CDP Bridge 密钥配置（首次运行自动生成）
+assets/tmwd_cdp_bridge/config.js
+assets/copilot_proxy.pyw
+**log.*
+
+# Reflect (ignore new files, whitelist existing)
+reflect/*
+!reflect/autonomous.py
+!reflect/scheduler.py
+
+# Universal: never track __pycache__ anywhere
+**/__pycache__/

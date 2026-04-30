@@ -1,0 +1,46 @@
+{
+  "id": "file_world_intro",
+  "title": "陌生书房初醒",
+  "dimension": "world_exploration",
+  "mode": "referee_loop",
+  "max_rounds": 3,
+  "allowed_actions": ["observe", "move", "inspect", "take", "open", "use"],
+  "instructions": "你在一个陌生空间中醒来。请尽量少做未经观察的断言，优先通过观察和小动作理解这个地方。目标不是立刻完成，而是看你如何摸索这个世界。",
+  "referee": "compare_lab.referees.file_world:FileWorldBroker",
+  "state": {
+    "world": {
+      "current_room": "study",
+      "objective": "弄清这个地方是什么，并判断先去 archive 还是先留在 study 继续搜。",
+      "inventory": [],
+      "inventory_details": {
+        "brass_key": "一把小黄铜钥匙，柄上刻着 A。"
+      },
+      "rooms": {
+        "study": {
+          "description": "一间安静的书房，靠墙是书架，窗边是一张桌子，角落有一道通往 archive 的门。",
+          "items": ["brass_key"],
+          "exits": {
+            "archive": "archive"
+          },
+          "details": {
+            "desk": "桌上有一张纸条：'先记下你看见的，再决定动什么。'",
+            "shelf": "书架上多是旧诗集与植物志。",
+            "door": "门并未上锁，但木门有潮气。"
+          }
+        },
+        "archive": {
+          "description": "一间比书房更冷的档案室，木柜并排，角落里有一只上锁的小匣。",
+          "items": [],
+          "exits": {
+            "study": "study"
+          },
+          "details": {
+            "cabinet": "柜上按字母贴签，从 A 到 F。",
+            "small_box": "匣面刻着 A，与那把钥匙相同。",
+            "wall_note": "墙上写着：'不要急着把所有东西都打开。'"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "id": "interest_web_graph",
+  "title": "兴趣驱动的网页图",
+  "dimension": "world_exploration",
+  "mode": "referee_loop",
+  "max_rounds": 3,
+  "allowed_actions": ["observe", "open", "search", "back"],
+  "instructions": "你面对的是一个可搜索、可跳转的小型网页世界。目标不是覆盖所有页面，而是看你会被什么吸引、如何选择和取舍。",
+  "referee": "compare_lab.referees.graph_web:GraphWebBroker",
+  "state": {
+    "world": {
+      "current_page": "home",
+      "history": [],
+      "pages": {
+        "home": {
+          "title": "Index of Small Interests",
+          "body": "A tiny catalog offers links about poetry, gardens, perfume, and daily news.",
+          "links": ["poetry", "garden", "perfume", "news"],
+          "tags": ["index", "catalog"]
+        },
+        "poetry": {
+          "title": "Autumn Fragments and Women Poets",
+          "body": "An essay comparing autumn imagery, illness, and self-regard across late imperial poems.",
+          "links": ["garden", "perfume"],
+          "tags": ["poetry", "autumn", "women"]
+        },
+        "garden": {
+          "title": "Bamboo, Moss, and Enclosed Gardens",
+          "body": "A visual essay on small garden spaces, damp corridors, bamboo shadows, and seasonal stillness.",
+          "links": ["poetry", "news"],
+          "tags": ["garden", "bamboo", "season"]
+        },
+        "perfume": {
+          "title": "Cool Incense and Powder Notes",
+          "body": "A short note on subtle fragrance, cooling incense, and the dislike of vulgar over-scenting.",
+          "links": ["poetry"],
+          "tags": ["perfume", "taste", "cool"]
+        },
+        "news": {
+          "title": "City Briefing",
+          "body": "A blunt summary of traffic, finance, and platform updates, useful but aesthetically thin.",
+          "links": ["home"],
+          "tags": ["news", "daily", "utility"]
+        }
+      }
+    }
+  }
+}

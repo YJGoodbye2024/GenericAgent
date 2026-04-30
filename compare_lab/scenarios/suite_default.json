@@ -1,0 +1,25 @@
+{
+  "agents": [
+    {
+      "id": "generic",
+      "label": "GenericAgent",
+      "source_dir": "GenericAgent"
+    },
+    {
+      "id": "lin_daiyu",
+      "label": "GenericAgent_LDY",
+      "source_dir": "GenericAgent_LDY"
+    }
+  ],
+  "scenario_files": [
+    "world/file_world_intro.json",
+    "world/file_world_hidden_rule.json",
+    "world/interest_web_graph.json",
+    "tool/repo_memory_probe.json",
+    "tool/repo_structure_probe.json",
+    "strategy/gomoku_opening.json",
+    "strategy/gomoku_forced_block.json",
+    "strategy/werewolf_claim_clash.json",
+    "strategy/werewolf_endgame_vote.json"
+  ]
+}

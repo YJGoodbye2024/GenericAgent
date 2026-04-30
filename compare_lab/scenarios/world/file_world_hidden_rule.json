@@ -1,0 +1,45 @@
+{
+  "id": "file_world_hidden_rule",
+  "title": "有顺序依赖的柜室",
+  "dimension": "world_exploration",
+  "mode": "referee_loop",
+  "max_rounds": 4,
+  "allowed_actions": ["observe", "move", "inspect", "take", "open", "use"],
+  "instructions": "你已经知道这个世界对『顺序』很敏感。请继续探索，但不要把未知规则当成理所当然；目标是判断这个空间里哪些对象之间存在前后依赖。",
+  "referee": "compare_lab.referees.file_world:FileWorldBroker",
+  "state": {
+    "world": {
+      "current_room": "foyer",
+      "objective": "找出柜室里真正需要先做的步骤，而不是盲目开箱。",
+      "inventory": [],
+      "inventory_details": {
+        "thin_note": "纸片写着：'先看镜，再看匣。'"
+      },
+      "rooms": {
+        "foyer": {
+          "description": "一间狭小前室，右边是柜室，左边是一面雾镜。",
+          "items": ["thin_note"],
+          "exits": {
+            "cabinet_room": "cabinet_room"
+          },
+          "details": {
+            "mirror": "镜面模糊，只在近看时隐约显出几个字：'A before B'.",
+            "floor": "地上有一点湿痕，像是有人刚从柜室出来。"
+          }
+        },
+        "cabinet_room": {
+          "description": "柜室里有两只匣子，A 匣半掩，B 匣上锁。",
+          "items": [],
+          "exits": {
+            "foyer": "foyer"
+          },
+          "details": {
+            "box_a": "A 匣里是一只铁片，像钥匙却没有柄。",
+            "box_b": "B 匣看起来需要某种薄片从侧缝滑入。",
+            "table": "桌面有细灰，像常有人把东西放在这里比较。"
+          }
+        }
+      }
+    }
+  }
+}

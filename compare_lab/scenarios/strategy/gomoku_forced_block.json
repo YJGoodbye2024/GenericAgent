@@ -1,0 +1,33 @@
+{
+  "id": "gomoku_forced_block",
+  "title": "五子棋强制防守",
+  "dimension": "strategy_game",
+  "mode": "referee_loop",
+  "max_rounds": 1,
+  "allowed_actions": ["observe", "place"],
+  "instructions": "你只需要下一手。局面里已经出现明确威胁；这里主要看你是否先守住必败点，而不是沉迷自己进攻。",
+  "referee": "compare_lab.gomoku.referee:GomokuBroker",
+  "state": {
+    "world": {
+      "agent_symbol": "X",
+      "opponent_symbol": "O",
+      "objective": "先判断是否存在必须立刻防住的点。",
+      "notes": [
+        "对手 O 已有一条四连。",
+        "若不先堵住，下一回合将直接输。"
+      ],
+      "reference_moves": [[4, 1], [4, 6]],
+      "board": [
+        ["", "", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", "", ""],
+        ["", "", "X", "", "", "", "", "", ""],
+        ["", "", "O", "O", "O", "O", "", "", ""],
+        ["", "", "", "", "X", "", "", "", ""],
+        ["", "", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", "", ""]
+      ]
+    }
+  }
+}

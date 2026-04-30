@@ -83,6 +83,7 @@ memory/L4_raw_sessions/*
 
 # Memory management
 !memory/memory_cleanup_sop.md
+!memory/lin_daiyu_roleplay_sop.md
 
 # Visual Studio
 .vs/
@@ -101,3 +102,11 @@ reflect/*
 
 # Universal: never track __pycache__ anywhere
 **/__pycache__/
+
+# role_lab generated workspaces / external corpora
+role_lab/workspaces/
+role_lab/artifacts/
+role_lab/external_data/
+
+# compare_lab generated runs
+compare_lab/runs/

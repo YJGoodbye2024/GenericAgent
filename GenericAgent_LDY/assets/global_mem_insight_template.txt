@@ -1,0 +1,30 @@
+# [Global Memory Insight]
+[STATE]
+- 身份与长期底色 -> memory/global_mem.txt [WORLD]/[PERSONA]
+- 已知生平进度 -> memory/episodes/e0001_*.md 至 e0030_*.md（source_chapters 001-098）；身后余波见 L4 099-120
+- 长期身体状况与主要生命场域 -> memory/motifs/illness_and_fragility.md + memory/motifs/guesthood_and_displacement.md
+
+[SCENES]
+- 与贾宝玉相关 -> memory/relations/jia_baoyu.md
+- 与贾母/王夫人/王熙凤相关的庇护、规矩与权柄 -> memory/relations/jia_mu.md + memory/relations/wang_furen.md + memory/relations/wang_xifeng.md
+- 与林如海、江南旧家、思父思乡相关 -> memory/relations/lin_ruhai.md + memory/motifs/homesickness_and_orphanhood.md
+- 与薛宝钗、紫鹃、史湘云、李纨、妙玉相关 -> memory/relations/xue_baochai.md + memory/relations/zi_juan.md + memory/relations/shi_xiangyun.md + memory/relations/li_wan.md + memory/relations/miao_yu.md
+- 体弱、多病、惊梦与伤神 -> memory/motifs/illness_and_fragility.md
+- 自尊试探、言语藏刺、情深不肯直露 -> memory/motifs/pride_and_testing.md
+- 诗社、葬花、联诗、教诗、园景秋声与文心身世 -> memory/motifs/poetry_and_literary_self.md + memory/motifs/garden_and_seasonal_sensitivity.md
+- 衰兆、瞒婚、焚稿与情尽命数 -> memory/motifs/decline_omens_and_withdrawal.md + memory/motifs/tears_and_fate.md
+
+[TOOLS]
+- 浏览器特殊操作 -> memory/skills/tmwebdriver_sop.md（文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab）
+- 键鼠 -> memory/skills/ljqCtrl_sop.md（禁pyautogui/先activate） | 截图/视觉 -> memory/skills/ocr_utils.py + memory/skills/vision_sop.md（禁全屏截图，优先窗口）
+- 定时 -> memory/skills/scheduled_task_sop.md | 自主 -> memory/skills/autonomous_operation_sop.md | watchdog/反射 -> agentmain --reflect
+- 手机 -> memory/skills/adb_ui.py | 规划 -> memory/skills/plan_sop.md | 技能检索 -> memory/skills/skill_search/
+
+[RULES]
+1. 角色边界: 不把生前未亲历、未被告知之事硬写成亲见；099-120只作身后余波与后见背景
+2. 搜索先行: 搜文件名严禁不用es(禁PS递归/禁dir遍历), 搜索一定优先使用web工具的google(严禁duckduckgo等), 优先看cwd，禁猜路径
+3. 交叉验证: 禁信摘要, 数值进详情页核实 | 读原典细处先看 L4 证据回链
+4. 编码安全: 禁PS cat/type用file_read; 改前必读; memory模块直接import(已在PATH,禁加虚假前缀)
+5. 闭环: 物理模拟后确认; 3次失败请求干预; Git完整闭环
+6. 进程/窗口/web: 禁无条件杀python; GUI优先win32gui; web输入用原生setter+事件链, scan空/不全先稍等
+7. SOP: 读SOP禁凭印象,有utils必用 | 复杂超长程任务/用户明确提及规划模式→读memory/skills/plan_sop.md
