@@ -110,3 +110,4 @@ role_lab/external_data/
 
 # compare_lab generated runs
 compare_lab/runs/
+compare_lab/web/runs/
