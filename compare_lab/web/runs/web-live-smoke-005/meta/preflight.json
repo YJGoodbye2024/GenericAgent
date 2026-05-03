@@ -1,0 +1,20 @@
+{
+  "outside_sandbox_required": true,
+  "browser_bin": "/tmp/google-chrome-xvfb",
+  "sides": {
+    "generic": {
+      "ok": false,
+      "model_name": "minimax-m2.7",
+      "response_excerpt": "LLM Running (Turn 1) ... <summary>检查浏览器标签页状态</summary> 🛠️ web_scan({\"tabs_only\": true}) LLM Running (Turn 2) ... 🛠️ file_read({\"path\": \"web_setup_sop\"}) LLM Running (Turn 3) ... 🛠️ file_read({\"path\": \"web_setup_sop.md\"}) LLM Running (Tur...",
+      "session_count": 0,
+      "error": "browser_bridge_not_ready"
+    },
+    "lin_daiyu": {
+      "ok": false,
+      "model_name": "minimax-m2.7",
+      "response_excerpt": "LLM Running (Turn 1) ... 🛠️ web_scan({\"tabs_only\": true}) LLM Running (Turn 2) ... <summary>浏览器报无可用标签页，看来此时并无窗口开着。</summary> 试了一探，web_scan 却报了\"没有可用的浏览器标签页\"——这说明此刻并没有浏览器实例在跑，连一个标签页也没有打开。 若想进行网页操作，还得先打开浏览器才行。",
+      "session_count": 0,
+      "error": "browser_bridge_not_ready"
+    }
+  }
+}

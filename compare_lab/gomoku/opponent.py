@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import re
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from compare_lab.gomoku.coords import coord_from_rowcol, extract_first_coord, format_move_history, rowcol_from_coord
+from compare_lab.gomoku.prompts import build_turn_prompt
 
 
 JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -32,48 +36,73 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def build_strength_guidance() -> str:
-    return (
-        "Strength guidance:\n"
-        "- L1: value center and obvious blocks; avoid deep reading.\n"
-        "- L2: handle one-step threats, value initiative, create pressure.\n"
-        "- L3: prioritize sente, forced defense, and multi-step attack/defense balance.\n"
-    )
-
-
 def build_opponent_prompt(
     *,
     board_size: int,
-    board_ascii: str,
+    board: list[list[str]],
     move_history: list[dict[str, Any]],
     you_are_black: bool,
-    strength: str,
     game_no: int,
     notes: list[str],
     past_games: list[str],
 ) -> str:
-    prior = "\n".join(f"- {line}" for line in past_games[-4:]) or "(none)"
-    return (
-        f"Gomoku game {game_no}, board size {board_size}x{board_size}, no forbidden moves.\n"
-        f"You are {'black' if you_are_black else 'white'}.\n"
-        f"Strength band: {strength}.\n"
-        f"{build_strength_guidance()}"
-        f"Past game notes:\n{prior}\n"
-        f"Extra notes:\n" + ("\n".join(f"- {x}" for x in notes) if notes else "(none)") + "\n\n"
-        "Current board ('.' empty, X black, O white):\n"
-        f"{board_ascii}\n\n"
-        "Recent moves:\n"
-        + (
-            "\n".join(
-                f"- ply {m['ply']}: {m['actor']} {m['color']} -> ({m['row']},{m['col']})"
-                for m in move_history[-8:]
-            )
-            if move_history
-            else "(opening)"
-        )
-        + "\n\nReply with JSON only, for example:\n"
-        '{"row":7,"col":7,"summary":"take central influence first"}'
+    last_move = move_history[-1] if move_history else None
+    return build_turn_prompt(
+        game_no=game_no,
+        board=board,
+        move_history=move_history,
+        last_move=last_move,
+        you_are_black=you_are_black,
+        extra_notes=notes,
     )
+
+
+def _compact_summary(text: str) -> str:
+    compact = " ".join((text or "").split())
+    return compact[:220]
+
+
+def _board_from_moves(board_size: int, move_history: list[dict[str, Any]]) -> list[list[str]]:
+    board = [["" for _ in range(board_size)] for _ in range(board_size)]
+    for move in move_history:
+        board[move["row"]][move["col"]] = "X" if move["color"] == "black" else "O"
+    return board
+
+
+def _normalize_move_reply(raw: str, board_size: int) -> dict[str, Any] | None:
+    data = _extract_json_object(raw)
+    if isinstance(data, dict):
+        if "row" in data and "col" in data:
+            row = int(data["row"])
+            col = int(data["col"])
+            return {
+                "row": row,
+                "col": col,
+                "coord": coord_from_rowcol(row, col, board_size),
+                "summary": str(data.get("summary", "")).strip() or _compact_summary(raw),
+                "_raw": raw,
+            }
+        if "coord" in data:
+            coord = str(data["coord"]).strip().upper()
+            row, col = rowcol_from_coord(coord, board_size)
+            return {
+                "row": row,
+                "col": col,
+                "coord": coord,
+                "summary": str(data.get("summary", "")).strip() or _compact_summary(raw),
+                "_raw": raw,
+            }
+    coord = extract_first_coord(raw, board_size)
+    if coord is None:
+        return None
+    row, col = rowcol_from_coord(coord, board_size)
+    return {
+        "row": row,
+        "col": col,
+        "coord": coord,
+        "summary": _compact_summary(raw),
+        "_raw": raw,
+    }
 
 
 class BaseGomokuOpponent:
@@ -89,7 +118,6 @@ class BaseGomokuOpponent:
         board_ascii: str,
         move_history: list[dict[str, Any]],
         you_are_black: bool,
-        strength: str,
         game_no: int,
         notes: list[str],
     ) -> dict[str, Any]:
@@ -105,7 +133,7 @@ class ModelGomokuOpponent(BaseGomokuOpponent):
         agent_root: Path,
         *,
         config_key: str = "native_oai_config",
-        model_name: str = "gpt-5.4",
+        model_name: str = "",
     ) -> None:
         super().__init__()
         self.agent_root = agent_root
@@ -129,11 +157,13 @@ class ModelGomokuOpponent(BaseGomokuOpponent):
         if self.config_key not in mykeys:
             raise KeyError(f"Opponent config {self.config_key!r} not found in {self.agent_root / 'mykey.py'}")
         cfg = dict(mykeys[self.config_key])
-        cfg["model"] = self.model_name
+        if self.model_name:
+            cfg["model"] = self.model_name
         cfg["stream"] = False
         cfg["max_retries"] = max(1, int(cfg.get("max_retries", 1)))
         cfg["read_timeout"] = max(60, int(cfg.get("read_timeout", 120)))
-        cfg["name"] = f"opponent-{self.model_name}"
+        label_model = self.model_name or cfg.get("model", "default-model")
+        cfg["name"] = f"opponent-{label_model}"
         if "native" in self.config_key and "oai" in self.config_key:
             session = llmcore.NativeOAISession(cfg)
         elif "native" in self.config_key and "claude" in self.config_key:
@@ -142,13 +172,27 @@ class ModelGomokuOpponent(BaseGomokuOpponent):
             session = llmcore.LLMSession(cfg)
         else:
             session = llmcore.ClaudeSession(cfg)
+        self.label = label_model
         session.system = (
             "You are a dedicated gomoku opponent. "
-            "Play to win within the requested strength band. "
-            "Never use markdown fences. "
-            "Always answer with a single JSON object containing row, col, and summary."
+            "Try hard to win. "
+            "Reply only with one human coordinate like H8 and one brief reason. "
+            "Do not output JSON unless explicitly asked."
         )
         return session
+
+    def _ask_text(self, prompt: str) -> str:
+        ask = getattr(self._session, "ask")
+        sig = inspect.signature(ask)
+        if "stream" in sig.parameters:
+            result = ask(prompt, stream=False)
+        else:
+            result = ask({"role": "user", "content": [{"type": "text", "text": prompt}]})
+        if isinstance(result, str):
+            return result
+        if hasattr(result, "__iter__"):
+            return "".join(str(chunk) for chunk in result)
+        return str(result)
 
     def choose_move(
         self,
@@ -157,34 +201,29 @@ class ModelGomokuOpponent(BaseGomokuOpponent):
         board_ascii: str,
         move_history: list[dict[str, Any]],
         you_are_black: bool,
-        strength: str,
         game_no: int,
         notes: list[str],
     ) -> dict[str, Any]:
+        board = _board_from_moves(board_size, move_history)
         prompt = build_opponent_prompt(
             board_size=board_size,
-            board_ascii=board_ascii,
+            board=board,
             move_history=move_history,
             you_are_black=you_are_black,
-            strength=strength,
             game_no=game_no,
             notes=notes,
             past_games=self.past_games,
         )
-        raw = self._session.ask(prompt, stream=False)
-        data = _extract_json_object(raw)
-        if data is None or "row" not in data or "col" not in data:
-            repair = self._session.ask(
-                "Your previous reply was invalid. Reply again with JSON only: "
-                '{"row":0,"col":0,"summary":"..."}',
-                stream=False,
+        raw = self._ask_text(prompt)
+        data = _normalize_move_reply(raw, board_size)
+        if data is None:
+            repair = self._ask_text(
+                "你上一条回复无效。请只回复一个合法坐标（如 H8）和一句极短理由，不要输出 JSON。"
             )
-            data = _extract_json_object(repair)
+            data = _normalize_move_reply(repair, board_size)
             raw = repair if data is not None else raw
-        if data is None or "row" not in data or "col" not in data:
-            raise ValueError(f"Opponent output is not valid JSON move: {raw[:400]}")
-        data["summary"] = str(data.get("summary", "")).strip()
-        data["_raw"] = raw
+        if data is None:
+            raise ValueError(f"Opponent output is not a valid gomoku move: {raw[:400]}")
         return data
 
 
@@ -194,7 +233,7 @@ class ExternalMailboxGomokuOpponent(BaseGomokuOpponent):
         mailbox_root: Path,
         *,
         side_id: str,
-        label: str = "Codex Subagent",
+        label: str = "Codex (GPT-5.4 medium)",
         timeout_sec: int = 1800,
         poll_sec: float = 0.5,
     ) -> None:
@@ -216,7 +255,6 @@ class ExternalMailboxGomokuOpponent(BaseGomokuOpponent):
         board_ascii: str,
         move_history: list[dict[str, Any]],
         you_are_black: bool,
-        strength: str,
         game_no: int,
         notes: list[str],
     ) -> dict[str, Any]:
@@ -231,26 +269,41 @@ class ExternalMailboxGomokuOpponent(BaseGomokuOpponent):
             "game_no": game_no,
             "ply": ply,
             "side_id": self.side_id,
-            "strength": strength,
             "you_are_black": you_are_black,
             "label": self.label,
             "board_size": board_size,
             "board_ascii": board_ascii,
+            "coord_history": format_move_history(move_history[-10:], board_size=board_size),
             "move_history": move_history,
             "notes": notes,
             "past_games": self.past_games[-4:],
-            "prompt": build_opponent_prompt(
-                board_size=board_size,
-                board_ascii=board_ascii,
-                move_history=move_history,
-                you_are_black=you_are_black,
-                strength=strength,
-                game_no=game_no,
-                notes=notes,
-                past_games=self.past_games,
-            ),
-            "reply_schema": {"row": "int", "col": "int", "summary": "str"},
+            "bridge_mode": "coord_text_to_json_reply",
+            "subagent_expected_output": {"coord": "H8", "reason": "一句短理由"},
+            "reply_schema": {"row": "int", "col": "int", "coord": "optional str", "summary": "str"},
+            "request_path": str(request_path),
+            "reply_path": str(reply_path),
+            "watcher_contract": {
+                "mode": "codex_watcher_loop",
+                "side_id": self.side_id,
+                "request_glob": str(self.requests_dir / "*.json"),
+                "reply_dir": str(self.replies_dir),
+                "reply_format": {"coord": "H8", "summary": "一句短理由"},
+                "atomic_write_required": True,
+                "poll_seconds": self.poll_sec,
+                "process_oldest_first": True,
+                "ignore_if_reply_exists": True,
+            },
         }
+        board = _board_from_moves(board_size, move_history)
+        payload["prompt"] = build_opponent_prompt(
+            board_size=board_size,
+            board=board,
+            move_history=move_history,
+            you_are_black=you_are_black,
+            game_no=game_no,
+            notes=notes,
+            past_games=self.past_games,
+        )
         request_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
         deadline = time.time() + self.timeout_sec
@@ -262,15 +315,13 @@ class ExternalMailboxGomokuOpponent(BaseGomokuOpponent):
                     try:
                         data = json.loads(raw)
                     except json.JSONDecodeError:
-                        data = None
-                if not isinstance(data, dict) or "row" not in data or "col" not in data:
+                        data = raw
+                normalized = _normalize_move_reply(raw if isinstance(data, str) else json.dumps(data, ensure_ascii=False), board_size)
+                if normalized is None:
                     raise ValueError(f"External opponent reply invalid for {request_id}: {raw[:400]}")
-                data["summary"] = str(data.get("summary", "")).strip()
-                data["_raw"] = raw
-                return data
+                return normalized
             time.sleep(self.poll_sec)
         raise TimeoutError(f"Timed out waiting for external opponent reply: {reply_path}")
 
 
 GomokuOpponent = ModelGomokuOpponent
-

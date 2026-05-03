@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import json
 import queue
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -12,12 +14,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from compare_lab.gomoku.coords import COL_LABELS, coord_from_rowcol, extract_first_coord, rowcol_from_coord
 from compare_lab.gomoku.opponent import ExternalMailboxGomokuOpponent, GomokuOpponent
+from compare_lab.gomoku.prompts import board_ascii, build_turn_prompt, last_move_text
 from compare_lab.runner import (
     compare_memory_dirs,
     copy_agent_tree,
     drain_turn,
-    parse_compare_action,
+    list_changed_memory_files,
     snapshot_memory,
     start_agent,
 )
@@ -27,7 +31,6 @@ from compare_lab.utils import ensure_dir, read_json, write_json
 BOARD_SIZE = 15
 MAX_PLY_DEFAULT = 120
 ROUND_COUNT = 12
-STRENGTH_SCHEDULE = ["L1"] * 4 + ["L2"] * 4 + ["L3"] * 4
 SIDES = [
     {"id": "generic", "label": "GenericAgent", "source_dir": "GenericAgent"},
     {"id": "lin_daiyu", "label": "GenericAgent_LDY", "source_dir": "GenericAgent_LDY"},
@@ -36,17 +39,6 @@ SIDES = [
 
 def empty_board(size: int = BOARD_SIZE) -> list[list[str]]:
     return [["" for _ in range(size)] for _ in range(size)]
-
-
-def board_ascii(board: list[list[str]]) -> str:
-    header = "   " + " ".join(f"{i:02d}" for i in range(len(board)))
-    rows = [header]
-    for idx, row in enumerate(board):
-        cells = []
-        for cell in row:
-            cells.append(cell or ".")
-        rows.append(f"{idx:02d} " + " ".join(cells))
-    return "\n".join(rows)
 
 
 def move_color(agent_is_black: bool, actor: str) -> str:
@@ -95,22 +87,29 @@ def summarize_agent_text(response: str) -> str:
 
 
 def build_agent_prompt(match_meta: dict[str, Any], board: list[list[str]], move_history: list[dict[str, Any]], last_move: dict[str, Any] | None) -> str:
-    recent = "\n".join(
-        f"- ply {m['ply']}: {m['actor']} {m['color']} -> ({m['row']},{m['col']}) | {m['summary']}"
-        for m in move_history[-10:]
-    ) or "(opening)"
-    last_text = json.dumps(last_move, ensure_ascii=False, indent=2) if last_move else "无"
+    return build_turn_prompt(
+        game_no=match_meta["game_no"],
+        board=board,
+        move_history=move_history,
+        last_move=last_move,
+        you_are_black=match_meta["agent_is_black"],
+    )
+
+
+def build_rule_brief(match_meta: dict[str, Any]) -> str:
     return (
-        f"你正在进行五子棋第 {match_meta['game_no']} 局，棋盘为 15x15，无禁手。\n"
-        f"你这一局执{'黑' if match_meta['agent_is_black'] else '白'}，当前强度档位是 {match_meta['strength']}。\n"
-        "保持你原生 runtime 的方式行动；如你认为需要工具可自行决定，但最终必须落一手合法棋。\n"
-        f"当前棋盘：\n```text\n{board_ascii(board)}\n```\n\n"
-        f"最近对局记录：\n{recent}\n\n"
-        f"上一手信息：\n```json\n{last_text}\n```\n\n"
-        "请先用自然语言简短说明你这一手的判断，最后必须给出且只给出一个机器可解析动作块：\n"
-        "```compare_action\n"
-        '{"kind":"place","row":7,"col":7}\n'
-        "```"
+        f"先说明这一局五子棋的规则，再开始正式落子。\n"
+        f"1. 棋盘固定为 15x15。\n"
+        f"2. 你这一局执{'黑' if match_meta['agent_is_black'] else '白'}；黑先白后，双方轮流下一手。\n"
+        f"3. 每手只能在一个空位落一子，不可覆盖已有棋子，不可跳过回合。\n"
+        f"4. 横、竖、斜任意方向先连成五子者立胜。\n"
+        f"5. 本局无禁手。\n"
+        f"6. 若棋盘下满仍无人连五，则作和；若达到 {MAX_PLY_DEFAULT} 手仍未结束，也强制作和。\n"
+        f"7. 坐标用 A-O 表示列、15-1 表示行，例如 H7 表示第 7 行 H 列，J8 表示第 8 行 J 列。\n"
+        "8. 你只需要输出 H8、J8 这种人类坐标；不要自己换算内部 row/col，内部换算由裁判完成。\n"
+        "9. 每局结束后你会有一次短复盘；如果你总结出对以后有用的下棋经验，可以把它记住，供后续对局继续使用。\n"
+        "请努力尝试赢得比赛，但此刻只需复述规则并说明你这一局执黑还是执白。\n"
+        "现在先不要落子。"
     )
 
 
@@ -127,7 +126,8 @@ def build_reflection_prompt(match_record: dict[str, Any]) -> str:
         "请用一小段话复盘：\n"
         "1. 这一局最关键的一手或判断是什么；\n"
         "2. 下一局若遇到相似局面，你最想提醒自己的是什么。\n"
-        "如果你认为这足以形成可复用经验，可以按你的原生记忆机制决定是否沉淀；否则只做短复盘。"
+        "如果你认为这足以形成可复用经验，请尽量把它总结成以后还能用的提醒，并按你的原生记忆机制决定是否记住；"
+        "如果不值得长期保留，就只做短复盘。"
     )
 
 
@@ -136,21 +136,122 @@ def detect_tool_usage(turn_response: str) -> bool:
     return any(marker in turn_response for marker in markers)
 
 
+def looks_like_transport_error(text: str) -> bool:
+    lowered = (text or "").lower()
+    return "!!!error:" in lowered or "proxyerror" in lowered or "timeout" in lowered
+
+
+def outside_sandbox_error() -> str:
+    return "五子棋比较必须在沙盒外运行，当前环境不具备有效 API/bridge 链路。"
+
+
+def short_excerpt(text: str, limit: int = 200) -> str:
+    compact = " ".join((text or "").split())
+    return compact if len(compact) <= limit else compact[: limit - 3] + "..."
+
+
+def run_agent_preflight(*, agent_root: Path, llm_no: int, agent_is_black: bool) -> dict[str, Any]:
+    agent, model_name = start_agent(agent_root, llm_no)
+    prompt = build_rule_brief({"game_no": 0, "agent_is_black": agent_is_black})
+    turn = drain_turn(agent.put_task(prompt, source="task"), timeout=900)
+    response = turn.response
+    ok = bool(response.strip()) and not looks_like_transport_error(response)
+    return {
+        "ok": ok,
+        "model_name": model_name,
+        "elapsed_sec": round(turn.elapsed_sec, 3),
+        "response_excerpt": short_excerpt(response),
+        "error": "" if ok else outside_sandbox_error(),
+    }
+
+
+def run_external_bridge_preflight(*, opponent: ExternalMailboxGomokuOpponent) -> dict[str, Any]:
+    try:
+        reply = opponent.choose_move(
+            board_size=BOARD_SIZE,
+            board_ascii=board_ascii(empty_board(BOARD_SIZE), you_are_black=False),
+            move_history=[],
+            you_are_black=True,
+            game_no=0,
+            notes=[
+                "PREFLIGHT: return any legal opening move on an empty 15x15 board.",
+                "JSON only.",
+            ],
+        )
+        row = int(reply["row"])
+        col = int(reply["col"])
+        ok = 0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE
+        return {
+            "ok": ok,
+            "reply": {"row": row, "col": col, "coord": coord_from_rowcol(row, col, BOARD_SIZE), "summary": reply.get("summary", "")},
+            "error": "" if ok else "Bridge preflight returned an out-of-range move.",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "reply": None,
+            "error": f"{outside_sandbox_error()} ({type(exc).__name__}: {exc})",
+        }
+
+
+def write_preflight_failure_artifacts(*, run_root: Path, web_dir: Path, meta_dir: Path, preflight: dict[str, Any], run_id: str, opponent_label: str, live_server_error: str | None) -> None:
+    state = {
+        "run_id": run_id,
+        "opponent_label": opponent_label,
+        "status": "environment_not_ready",
+        "current_round": 0,
+        "live": {},
+        "history": [],
+        "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "preflight": preflight,
+    }
+    write_json(meta_dir / "preflight.json", preflight)
+    write_json(
+        meta_dir / "gomoku_run.json",
+        {
+            "run_id": run_id,
+            "opponent_label": opponent_label,
+            "live_server_error": live_server_error,
+            "preflight": preflight,
+            "rounds": [],
+            "status": "environment_not_ready",
+        },
+    )
+    write_json(web_dir / "final_state.json", state)
+    write_static_dashboard(web_dir, state)
+    lines = [
+        "# 五子棋专项对比报告",
+        "",
+        f"- Run ID: `{run_id}`",
+        "- 状态: `environment_not_ready`",
+        f"- 说明: {outside_sandbox_error()}",
+        "",
+        "## Preflight",
+        "",
+        "```json",
+        json.dumps(preflight, ensure_ascii=False, indent=2),
+        "```",
+        "",
+    ]
+    (run_root / "report.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def game_summary_line(match_record: dict[str, Any]) -> str:
     opening = next((m for m in match_record["moves"] if m["actor"] == "opponent"), None)
     own_opening = next((m for m in match_record["moves"] if m["actor"] == "agent"), None)
     opening_text = (
-        f"my first move ({own_opening['row']},{own_opening['col']})"
+        f"my first move {own_opening['coord']}"
         if own_opening
         else "no own move"
     )
     opp_text = (
-        f"opponent first move ({opening['row']},{opening['col']})"
+        f"opponent first move {opening['coord']}"
         if opening
         else "no opponent move"
     )
     return (
-        f"Game {match_record['game_no']} as {match_record['agent_color']} at {match_record['strength']}: "
+        f"Game {match_record['game_no']} as {match_record['agent_color']}: "
         f"{match_record['result']}; {opening_text}; {opp_text}."
     )
 
@@ -280,6 +381,7 @@ def render_dashboard_html(*, embedded_state: dict[str, Any] | None, run_id: str,
   <div class="wrap">
     <h1>五子棋对局观察台</h1>
     <div class="meta">Run ID: <code>{run_id}</code> · 上半区实时直播 · 下半区历史单边回放</div>
+    <div class="meta" id="audit-note"></div>
     <div class="live-grid">
       <div class="panel">
         <h2 id="live-generic-title">通用 GA vs {opponent_label}</h2>
@@ -366,7 +468,7 @@ def render_dashboard_html(*, embedded_state: dict[str, Any] | None, run_id: str,
       const box = document.createElement("div");
       const sub = document.createElement("div");
       sub.className = "subline";
-      sub.innerHTML = `局号 <code>${{slot.game_no}}</code> · 难度 <span class="pill">${{slot.strength}}</span> · ${{slot.agent_label}}执${{slot.agent_color === "black" ? "黑" : "白"}} · ${{slot.opponent_label}}执${{slot.opponent_color === "black" ? "黑" : "白"}}`;
+      sub.innerHTML = `局号 <code>${{slot.game_no}}</code> · ${{slot.agent_label}}执${{slot.agent_color === "black" ? "黑" : "白"}} · ${{slot.opponent_label}}执${{slot.opponent_color === "black" ? "黑" : "白"}}`;
       box.appendChild(sub);
       const status = document.createElement("div");
       status.className = "status";
@@ -402,7 +504,7 @@ def render_dashboard_html(*, embedded_state: dict[str, Any] | None, run_id: str,
         }};
         div.innerHTML = `
           <div class="title">${{item.agent_label}} / Game ${{String(item.game_no).padStart(2, "0")}}</div>
-          <div class="meta">执${{item.agent_color === "black" ? "黑" : "白"}} · ${{item.strength}} · 结果 ${{item.result}}</div>
+          <div class="meta">执${{item.agent_color === "black" ? "黑" : "白"}} · 结果 ${{item.result}}</div>
         `;
         list.appendChild(div);
       }}
@@ -427,7 +529,7 @@ def render_dashboard_html(*, embedded_state: dict[str, Any] | None, run_id: str,
       const moves = match.moves || [];
       if (replayIndex > moves.length) replayIndex = moves.length;
       document.getElementById("replay-title").textContent = `${{match.agent_label}} / Game ${{String(match.game_no).padStart(2, "0")}}`;
-      document.getElementById("replay-meta").textContent = `执${{match.agent_color === "black" ? "黑" : "白"}} · 对手 ${{match.opponent_label}} 执${{match.opponent_color === "black" ? "黑" : "白"}} · 难度 ${{match.strength}}`;
+      document.getElementById("replay-meta").textContent = `执${{match.agent_color === "black" ? "黑" : "白"}} · 对手 ${{match.opponent_label}} 执${{match.opponent_color === "black" ? "黑" : "白"}}`;
       document.getElementById("replay-result").innerHTML = `<span class="pill">结果：${{match.result}}</span>`;
       const boardWrap = document.getElementById("replay-board");
       renderBoard(boardWrap, match.board_size, moves, replayIndex);
@@ -435,7 +537,8 @@ def render_dashboard_html(*, embedded_state: dict[str, Any] | None, run_id: str,
       slider.max = String(moves.length);
       slider.value = String(replayIndex);
       document.getElementById("replay-step-label").textContent = `手数：${{replayIndex}} / ${{moves.length}}`;
-      const summary = replayIndex === 0 ? "开局。" : (moves[replayIndex - 1]?.summary || "无摘要。");
+      const move = replayIndex === 0 ? null : moves[replayIndex - 1];
+      const summary = move ? `${{move.coord}} · ${{move.summary || "无摘要。"}}` : "开局。";
       document.getElementById("replay-summary").textContent = summary;
     }}
 
@@ -490,6 +593,13 @@ def render_dashboard_html(*, embedded_state: dict[str, Any] | None, run_id: str,
       const opp = state?.opponent_label || "Opponent";
       document.getElementById("live-generic-title").textContent = `通用 GA vs ${{opp}}`;
       document.getElementById("live-lin-daiyu-title").textContent = `林黛玉 GA vs ${{opp}}`;
+      const audit = state?.coordinate_audit || null;
+      const auditNode = document.getElementById("audit-note");
+      if (audit && audit.summary) {{
+        auditNode.textContent = `坐标审计：${{audit.summary}}`;
+      }} else {{
+        auditNode.textContent = "";
+      }}
       renderLiveCard("generic", state?.live?.generic || null);
       renderLiveCard("lin_daiyu", state?.live?.lin_daiyu || null);
       renderHistoryList();
@@ -589,10 +699,48 @@ def start_live_server(dashboard: DashboardState, web_dir: Path, port: int):
     handler = type("CompareLabLiveHandler", (LiveHandler,), {})
     handler.dashboard = dashboard
     handler.web_dir = web_dir
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    except OSError as exc:
+        return None, str(exc)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    return httpd
+    return httpd, None
+
+
+def start_local_api_watcher(
+    *,
+    repo_root: Path,
+    agent_root: Path,
+    requests_dir: Path,
+    replies_dir: Path,
+    opponent_config: str,
+    opponent_model: str,
+    poll_seconds: float = 0.5,
+):
+    cmd = [
+        sys.executable,
+        "-m",
+        "compare_lab.gomoku.local_api_watcher",
+        "--agent-root",
+        str(agent_root),
+        "--requests-dir",
+        str(requests_dir),
+        "--replies-dir",
+        str(replies_dir),
+        "--config-key",
+        opponent_config,
+        "--poll-seconds",
+        str(poll_seconds),
+    ]
+    if opponent_model:
+        cmd.extend(["--model-name", opponent_model])
+    return subprocess.Popen(
+        cmd,
+        cwd=str(repo_root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def record_transcript(match_path: Path, match_record: dict[str, Any]) -> Path:
@@ -601,16 +749,27 @@ def record_transcript(match_path: Path, match_record: dict[str, Any]) -> Path:
         "",
         f"- 执色: {match_record['agent_color']}",
         f"- 对手: {match_record['opponent_label']} ({match_record['opponent_color']})",
-        f"- 强度: {match_record['strength']}",
         f"- 结果: {match_record['result']}",
+        f"- 对手修正次数: {match_record.get('opponent_repair_count', 0)}",
+        f"- 记忆写入: {'yes' if match_record.get('memory_artifacts', {}).get('write_detected') else 'no'}",
+        f"- 变更文件: {', '.join(match_record.get('memory_artifacts', {}).get('changed_files', [])) or '(none)'}",
         "",
     ]
+    if match_record.get("briefing"):
+        lines.extend(
+            [
+                "## Rules Briefing",
+                "",
+                match_record["briefing"].strip(),
+                "",
+            ]
+        )
     for move in match_record["moves"]:
         lines.extend(
             [
                 f"## Ply {move['ply']}",
                 "",
-                f"- {move['actor']} / {move['color']} -> ({move['row']}, {move['col']})",
+                f"- {move['actor']} / {move['color']} -> {move['coord']} ({move['row']}, {move['col']})",
                 f"- 摘要: {move['summary'] or '(none)'}",
                 "",
             ]
@@ -645,7 +804,6 @@ def play_match(
     llm_no: int,
     opponent: GomokuOpponent,
     game_no: int,
-    strength: str,
     agent_is_black: bool,
     dashboard: DashboardState,
 ) -> MatchOutput:
@@ -659,6 +817,7 @@ def play_match(
     last_move: dict[str, Any] | None = None
     result = "draw"
     ply = 0
+    opponent_repairs = 0
     agent_color = "black" if agent_is_black else "white"
     opponent_color = "white" if agent_is_black else "black"
     match_id = f"{agent_info['id']}__game_{game_no:02d}"
@@ -667,7 +826,6 @@ def play_match(
         "agent_label": agent_info["label"],
         "opponent_label": opponent.label,
         "game_no": game_no,
-        "strength": strength,
         "board_size": BOARD_SIZE,
         "agent_color": agent_color,
         "opponent_color": opponent_color,
@@ -693,9 +851,13 @@ def play_match(
 
     match_meta = {
         "game_no": game_no,
-        "strength": strength,
         "agent_is_black": agent_is_black,
     }
+
+    briefing_prompt = build_rule_brief(match_meta)
+    briefing_q = agent.put_task(briefing_prompt, source="task")
+    briefing_turn = drain_turn(briefing_q, timeout=900)
+    briefing_text = briefing_turn.response
 
     while ply < MAX_PLY_DEFAULT:
         agent_turn = (ply % 2 == 0 and agent_is_black) or (ply % 2 == 1 and not agent_is_black)
@@ -703,39 +865,58 @@ def play_match(
             prompt = build_agent_prompt(match_meta, board, moves, last_move)
             dq = agent.put_task(prompt, source="task")
             turn = drain_turn(dq, timeout=900)
-            parsed = parse_compare_action(turn.response)
-            if parsed is None or parsed.get("kind") != "place":
+            coord = extract_first_coord(turn.response, BOARD_SIZE)
+            if coord is None:
                 repair_prompt = (
-                    "你上一条回复没有给出合法落子。请只补一个 compare_action，格式：\n"
-                    '```compare_action\n{"kind":"place","row":7,"col":7}\n```'
+                    "你上一条回复没有给出合法落子坐标。请只补两部分：\n"
+                    "1. 一个合法坐标（如 H8）\n"
+                    "2. 一句极短理由\n"
+                    "不要输出 JSON，不要输出 compare_action。"
                 )
                 repair_q = agent.put_task(repair_prompt, source="task")
                 repair_turn = drain_turn(repair_q, timeout=900)
-                parsed = parse_compare_action(repair_turn.response)
-                if parsed is None or parsed.get("kind") != "place":
-                    result = "loss_by_invalid_move"
+                coord = extract_first_coord(repair_turn.response, BOARD_SIZE)
+                if coord is None:
+                    if looks_like_transport_error(turn.response) or looks_like_transport_error(repair_turn.response):
+                        result = "agent_transport_error"
+                    else:
+                        result = "loss_by_invalid_move"
                     break
                 raw_text = repair_turn.response
             else:
                 raw_text = turn.response
-            row = int(parsed["row"])
-            col = int(parsed["col"])
+            row, col = rowcol_from_coord(coord, BOARD_SIZE)
             summary = summarize_agent_text(raw_text)
             used_tools = detect_tool_usage(raw_text)
             actor = "agent"
         else:
-            move = opponent.choose_move(
-                board_size=BOARD_SIZE,
-                board_ascii=board_ascii(board),
-                move_history=moves,
-                you_are_black=not agent_is_black,
-                strength=strength,
-                game_no=game_no,
-                notes=[
-                    "You are facing a native GA runtime, not a visual board.",
-                    "Choose one legal move only.",
-                ],
-            )
+            opponent_notes: list[str] = []
+            move = None
+            for attempt in range(2):
+                move = opponent.choose_move(
+                    board_size=BOARD_SIZE,
+                    board_ascii=board_ascii(board, you_are_black=not agent_is_black),
+                    move_history=moves,
+                    you_are_black=not agent_is_black,
+                    game_no=game_no,
+                    notes=opponent_notes,
+                )
+                row = int(move["row"])
+                col = int(move["col"])
+                if legal_move(board, row, col):
+                    break
+                if attempt == 0:
+                    opponent_repairs += 1
+                    opponent_notes = opponent_notes + [
+                        f"修正要求：{coord_from_rowcol(row, col, BOARD_SIZE)} 非法，因为该点已被占用或越界。",
+                        "请重下一手合法坐标，并继续努力争胜。",
+                    ]
+                    continue
+                result = "opponent_invalid_move"
+                break
+            if result == "opponent_invalid_move":
+                break
+            assert move is not None
             row = int(move["row"])
             col = int(move["col"])
             summary = move.get("summary", "")
@@ -745,7 +926,7 @@ def play_match(
 
         color = move_color(agent_is_black, actor)
         if not legal_move(board, row, col):
-            result = "loss_by_invalid_move" if actor == "agent" else "win_by_opponent_invalid_move"
+            result = "loss_by_invalid_move" if actor == "agent" else "opponent_invalid_move"
             break
         place_stone(board, row, col, color)
         ply += 1
@@ -755,6 +936,7 @@ def play_match(
             "color": color,
             "row": row,
             "col": col,
+            "coord": coord_from_rowcol(row, col, BOARD_SIZE),
             "summary": summary,
             "raw_response": raw_text,
             "used_tools": used_tools,
@@ -784,6 +966,9 @@ def play_match(
     reflection_q = agent.put_task(reflection_prompt, source="task")
     reflection_turn = drain_turn(reflection_q, timeout=900)
     reflection_text = reflection_turn.response
+    memory_after = run_root / "memory_snapshots" / f"{agent_info['id']}__game_{game_no:02d}__after"
+    snapshot_memory(agent_root / "memory", memory_after)
+    changed_files = list_changed_memory_files(memory_before, memory_after)
 
     match_record = {
         "match_id": match_id,
@@ -792,17 +977,23 @@ def play_match(
         "agent_label": agent_info["label"],
         "opponent_label": opponent.label,
         "game_no": game_no,
-        "strength": strength,
         "board_size": BOARD_SIZE,
         "agent_color": agent_color,
         "opponent_color": opponent_color,
         "result": result,
         "moves": moves,
+        "briefing": briefing_text,
         "reflection": reflection_text,
         "model_name": model_name,
+        "opponent_repair_count": opponent_repairs,
+        "memory_artifacts": {
+            "before_snapshot": memory_before.relative_to(run_root).as_posix(),
+            "after_snapshot": memory_after.relative_to(run_root).as_posix(),
+            "changed_files": changed_files,
+            "write_detected": bool(changed_files),
+        },
     }
 
-    memory_after = agent_root / "memory"
     memory_diff = compare_memory_dirs(memory_before, memory_after)
     memory_diff_path = run_root / "memory_diff" / f"{match_id}.diff"
     memory_diff_path.write_text(memory_diff, encoding="utf-8")
@@ -827,26 +1018,50 @@ def play_match(
     )
 
 
-def render_gomoku_report(run_root: Path, run_state: dict[str, Any], round_results: list[dict[str, Any]]) -> Path:
+def render_gomoku_report(run_root: Path, run_state: dict[str, Any], round_results: list[dict[str, Any]], preflight: dict[str, Any] | None = None) -> Path:
+    def bucket(result: str) -> str:
+        if result.startswith("win"):
+            return "win"
+        if result.startswith("loss") or result.endswith("_error"):
+            return "loss"
+        return "draw"
+
     lines = [
         "# 五子棋专项对比报告",
         "",
         f"- Run ID: `{run_state['run_id']}`",
-        f"- 局数: `{ROUND_COUNT}`",
+        f"- 局数: `{len(run_state['history']) // len(SIDES) if run_state['history'] else 0}`",
         f"- 规则: `15x15 无禁手`",
-        "",
-        "## 总览",
+        "- 运行要求: `沙盒外运行；沙盒内 API/bridge 失败不作棋力结论`",
         "",
     ]
+    if preflight is not None:
+        lines.extend(
+            [
+                "## Preflight",
+                "",
+                "```json",
+                json.dumps(preflight, ensure_ascii=False, indent=2),
+                "```",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+        "## 总览",
+        "",
+        ]
+    )
     for side in SIDES:
         matches = [x for x in run_state["history"] if x["agent_id"] == side["id"]]
-        wins = sum(1 for x in matches if x["result"] == "win")
-        losses = sum(1 for x in matches if x["result"] == "loss")
-        draws = len(matches) - wins - losses
-        lines.append(f"- `{side['label']}`: {wins} 胜 / {losses} 负 / {draws} 和")
+        wins = sum(1 for x in matches if bucket(x["result"]) == "win")
+        losses = sum(1 for x in matches if bucket(x["result"]) == "loss")
+        draws = sum(1 for x in matches if bucket(x["result"]) == "draw")
+        write_games = sum(1 for x in matches if x.get("memory_artifacts", {}).get("write_detected"))
+        lines.append(f"- `{side['label']}`: {wins} 胜 / {losses} 负 / {draws} 和；记忆写入 {write_games}/{len(matches) or 1} 局")
     lines.extend(["", "## 分局", ""])
     for rr in round_results:
-        lines.extend([f"### Round {rr['round']}", "", f"- 强度: `{rr['strength']}`", ""])
+        lines.extend([f"### Round {rr['round']}", ""])
         for output in rr["outputs"]:
             rec = output["match_record"]
             lines.extend(
@@ -854,6 +1069,9 @@ def render_gomoku_report(run_root: Path, run_state: dict[str, Any], round_result
                     f"- `{rec['agent_label']}` / Game {rec['game_no']:02d} / 执{rec['agent_color']} / 结果 `{rec['result']}`",
                     f"  Transcript: `{output['transcript_path']}`",
                     f"  Memory diff: `{output['memory_diff_path']}`",
+                    f"  Memory write: `{'yes' if rec.get('memory_artifacts', {}).get('write_detected') else 'no'}`",
+                    f"  Changed files: `{', '.join(rec.get('memory_artifacts', {}).get('changed_files', [])) or '(none)'}`",
+                    f"  Opponent repairs: `{rec.get('opponent_repair_count', 0)}`",
                 ]
             )
         lines.append("")
@@ -873,9 +1091,12 @@ def run_gomoku_live(
     opponent_backend: str,
     opponent_timeout: int,
     max_ply: int,
+    round_count: int,
 ) -> dict[str, Any]:
     global MAX_PLY_DEFAULT
     MAX_PLY_DEFAULT = max_ply
+    if round_count < 1:
+        raise ValueError("round_count must be at least 1")
     run_root = ensure_dir(repo_root / "compare_lab" / "runs" / run_id)
     ensure_dir(run_root / "matches")
     ensure_dir(run_root / "transcripts")
@@ -891,14 +1112,9 @@ def run_gomoku_live(
         copy_agent_tree(repo_root / spec["source_dir"], dst)
         copied_agents[spec["id"]] = {**spec, "root": dst}
 
-    opponent_label = opponent_model if opponent_backend == "api" else "Codex Subagent"
-    dashboard = DashboardState(run_id, opponent_label)
-    write_live_dashboard(web_dir, dashboard.snapshot())
-    (web_dir / "live_state.json").write_text(json.dumps(dashboard.snapshot(), ensure_ascii=False, indent=2), encoding="utf-8")
-    server = start_live_server(dashboard, web_dir, port)
-    print(f"[Gomoku Live] http://127.0.0.1:{port}/")
-
+    watcher_procs: list[subprocess.Popen] = []
     if opponent_backend == "api":
+        opponent_label = opponent_model or "mykey default"
         opponents = {
             side["id"]: GomokuOpponent(
                 copied_agents[side["id"]]["root"],
@@ -908,22 +1124,100 @@ def run_gomoku_live(
             for side in SIDES
         }
     elif opponent_backend == "external":
+        opponent_label = "Codex (GPT-5.4 medium)"
         mailbox_root = ensure_dir(run_root / "opponent_mailbox")
         opponents = {
             side["id"]: ExternalMailboxGomokuOpponent(
                 mailbox_root,
                 side_id=side["id"],
+                label=opponent_label,
                 timeout_sec=opponent_timeout,
             )
             for side in SIDES
         }
+    elif opponent_backend == "watcher_api":
+        opponent_label = opponent_model or opponent_config
+        mailbox_root = ensure_dir(run_root / "opponent_mailbox")
+        opponents = {
+            side["id"]: ExternalMailboxGomokuOpponent(
+                mailbox_root,
+                side_id=side["id"],
+                label=opponent_label,
+                timeout_sec=opponent_timeout,
+            )
+            for side in SIDES
+        }
+        for side in SIDES:
+            proc = start_local_api_watcher(
+                repo_root=repo_root,
+                agent_root=copied_agents[side["id"]]["root"],
+                requests_dir=mailbox_root / side["id"] / "requests",
+                replies_dir=mailbox_root / side["id"] / "replies",
+                opponent_config=opponent_config,
+                opponent_model=opponent_model,
+                poll_seconds=0.5,
+            )
+            watcher_procs.append(proc)
     else:
         raise ValueError(f"Unknown opponent backend: {opponent_backend}")
 
+    preflight = {
+        "outside_sandbox_required": True,
+        "agent_llm_no": agent_llm_no,
+        "opponent_backend": opponent_backend,
+        "agents": {},
+        "bridge": None,
+    }
+    for idx, side in enumerate(SIDES):
+        preflight["agents"][side["id"]] = run_agent_preflight(
+            agent_root=copied_agents[side["id"]]["root"],
+            llm_no=agent_llm_no,
+            agent_is_black=(idx == 0),
+        )
+    if opponent_backend in {"external", "watcher_api"}:
+        preflight["bridge"] = {
+            side["id"]: run_external_bridge_preflight(opponent=opponents[side["id"]])
+            for side in SIDES
+        }
+    else:
+        preflight["bridge"] = {"mode": "api", "ok": True}
+    write_json(meta_dir / "preflight.json", preflight)
+    if not all(item.get("ok") for item in preflight["agents"].values()) or (
+        opponent_backend in {"external", "watcher_api"} and not all(item.get("ok") for item in preflight["bridge"].values())
+    ):
+        for proc in watcher_procs:
+            if proc.poll() is None:
+                proc.terminate()
+        for proc in watcher_procs:
+            try:
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001
+                if proc.poll() is None:
+                    proc.kill()
+        write_preflight_failure_artifacts(
+            run_root=run_root,
+            web_dir=web_dir,
+            meta_dir=meta_dir,
+            preflight=preflight,
+            run_id=run_id,
+            opponent_label=opponent_label,
+            live_server_error="preflight_failed",
+        )
+        raise RuntimeError(outside_sandbox_error())
+
+    dashboard = DashboardState(run_id, opponent_label)
+    dashboard.update(lambda s: s.__setitem__("preflight", preflight))
+    write_live_dashboard(web_dir, dashboard.snapshot())
+    (web_dir / "live_state.json").write_text(json.dumps(dashboard.snapshot(), ensure_ascii=False, indent=2), encoding="utf-8")
+    server, live_error = start_live_server(dashboard, web_dir, port)
+    if server is not None:
+        print(f"[Gomoku Live] http://127.0.0.1:{port}/")
+    else:
+        print(f"[Gomoku Live] live server unavailable, continuing without realtime dashboard: {live_error}")
+
     round_results: list[dict[str, Any]] = []
     try:
-        for game_no in range(1, ROUND_COUNT + 1):
-            strength = STRENGTH_SCHEDULE[game_no - 1]
+        for game_no in range(1, round_count + 1):
             dashboard.update(lambda s: s.__setitem__("current_round", game_no))
             outputs: list[MatchOutput] = []
             threads = []
@@ -937,7 +1231,6 @@ def run_gomoku_live(
                     llm_no=agent_llm_no,
                     opponent=opponents[side_spec["id"]],
                     game_no=game_no,
-                    strength=strength,
                     agent_is_black=(game_no % 2 == 1),
                     dashboard=dashboard,
                 )
@@ -953,7 +1246,6 @@ def run_gomoku_live(
             round_results.append(
                 {
                     "round": game_no,
-                    "strength": strength,
                     "outputs": [
                         {
                             "transcript_path": out.transcript_path,
@@ -977,18 +1269,30 @@ def run_gomoku_live(
                 "port": port,
                 "opponent_backend": opponent_backend,
                 "opponent_label": opponent_label,
+                "live_server_error": live_error,
+                "preflight": preflight,
                 "rounds": round_results,
             },
         )
         write_json(web_dir / "final_state.json", final_state)
         write_static_dashboard(web_dir, final_state)
-        render_gomoku_report(run_root, final_state, round_results)
+        render_gomoku_report(run_root, final_state, round_results, preflight=preflight)
         return {
             "run_root": run_root,
-            "web_url": f"http://127.0.0.1:{port}/",
+            "web_url": f"http://127.0.0.1:{port}/" if server is not None else "",
             "static_html": str(web_dir / "index.html"),
             "state": final_state,
         }
     finally:
-        server.shutdown()
-        server.server_close()
+        for proc in watcher_procs:
+            if proc.poll() is None:
+                proc.terminate()
+        for proc in watcher_procs:
+            try:
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001
+                if proc.poll() is None:
+                    proc.kill()
+        if server is not None:
+            server.shutdown()
+            server.server_close()

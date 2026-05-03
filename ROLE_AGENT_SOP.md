@@ -79,6 +79,18 @@
 memory/skills/
 ```
 
+### 1.2.1 工具协议层也必须角色化
+
+只把 `L0-L4` 改成角色，并不能保证角色 Agent 在实际运行中不出戏。  
+如果 `<summary>`、失败说明、历史摘要、SOP 文案仍然是 GenericAgent 的裸工程报告体，那么一进入 tools 场景，角色就会被协议层压扁。
+
+因此，稳定版本里还应同时满足：
+
+- 工具调用规则与执行纪律尽量保留原 GenericAgent；
+- 但 `<summary>`、fallback、history 摘要必须改成角色本人在说话；
+- `memory/skills/*.md` 这类人可读文档，应改写成角色自己的“习术档案”；
+- 角色化不应只存在于聊天正文，而要进入 **tool-use protocol layer**。
+
 ### 1.3 人文记忆优先“厚沉淀”，不要纯规则抽取
 
 如果角色依赖小说、剧本、历史设定、游戏设定、访谈设定等人文材料：
@@ -199,6 +211,13 @@ memory/skills/
 - `agentmain.py` 中记忆模板初始化
 - `ga.py` 中长期记忆更新提示词
 
+如果你希望角色在 tools 场景里也不出戏，通常还必须改：
+
+- `ga.py` 中 `<summary>` 的要求与 fallback；
+- `ga.py` 中给下一轮看的 history 摘要文本；
+- `memory/skills/*.md` 的写法；
+- 若使用外部对比框架，如 `compare_lab`，则其 tool-use 题面也应避免强行诱导出审计式报告体。
+
 ### 3.3 需要迁移而不是删除的部分
 
 原 `GenericAgent/memory/` 下这些工程资产应迁到：
@@ -219,6 +238,12 @@ memory/skills/
 - 能不改内容就不改内容
 - 只改路径与组织
 - 统一当作角色学得的“术”
+
+但这是最低限度。  
+当角色已经成型后，推荐再做一步：
+
+- `.py` 工程脚本本体继续工程化；
+- `*_sop.md`、说明文档、`README.md` 等人可读文档改写成角色自己的“习术档案”。
 
 ---
 
@@ -335,7 +360,10 @@ L2 的作用是：
 
 - 不必每章一个
 - 不必每场景一个
-- 但每个都要足够厚，能支撑回忆
+- 数量不是固定指标，应由“记忆弧是否成立”决定
+- 宁可少而厚，也不要多而薄
+- 每个 episode 的正文说明至少应有 `200 tokens` 以上，核心事件通常应明显高于这个下限
+- 每个都要足够厚，能支撑回忆，而不是几句梗概
 
 #### relations
 
@@ -403,6 +431,7 @@ GenericAgent/ -> GenericAgent_<ROLE>/
 - 明确角色本体
 - 明确现代世界工具如何被角色理解
 - 保留原 GA 的行动纪律，但不再用通用执行器口吻
+- 明确说明：角色在使用工具、失败分析、阶段汇报时，仍是她自己在说话，不另切回一个“无人格执行层”
 
 ### Step 3. 重写记忆管理 SOP
 
@@ -458,6 +487,15 @@ GenericAgent/ -> GenericAgent_<ROLE>/
   - 角色稳定事实
   - 工程习术
 
+同时检查 `ga.py` 里和 tool-use 过程直接相关的文本层：
+
+- `<summary>` 的硬要求；
+- `<summary>` 缺失时的 fallback；
+- `history_info` / `WORKING MEMORY` 周围的说明语气；
+- 任何默认写入日志或摘要的文本。
+
+这些地方如果仍然是 GenericAgent 式报告腔，角色一进入 tools 场景就会明显出戏。
+
 ### Step 7. 迁移工程记忆到 `skills/`
 
 把原 `memory/` 根目录下的工程内容收编到：
@@ -471,6 +509,11 @@ memory/skills/
 - 不是删掉
 - 不是重写
 - 是迁位和统一组织
+
+在稳定版本中，推荐再多做半步：
+
+- 工程代码文件本体不必人格化；
+- 但 `memory/skills/*.md` 这类人可读 SOP 文本，应改写成角色自己的“习术档案”。
 
 ### Step 8. 建立角色记忆目录
 
@@ -511,6 +554,13 @@ memory/L4_raw_sessions/
 
 不要先写 L2。
 
+写 `episodes/` 时再补一条硬约束：
+
+- 不要按章回或场景机械平均切分；
+- 先判断哪些内容真的会沉成“厚记忆事件”；
+- 单个事件正文至少写到 `200 tokens` 以上，再考虑是否需要继续增厚；
+- 如果一个事件仍只有几句摘要，那通常说明它还不应该独立成一个 episode。
+
 ### Step 11. 从 L3 收敛 L2
 
 只有那些：
@@ -539,6 +589,12 @@ L1 只留：
 - 工具继承测试
 - 角色与工程不冲突测试
 
+如果仓库已经有外部对比框架（例如本仓库的 `compare_lab/`），还应追加：
+
+- tool-use 过程对比；
+- 策略型场景对比（如五子棋）；
+- 观察角色差异是否只停留在措辞层，还是已经进入行为层。
+
 ---
 
 ## 7. 推荐的验证方式
@@ -552,6 +608,7 @@ L1 只留：
 - 起手是不是第一人称本体
 - 有没有“我只是在扮演”之类泄漏
 - 工具调用时会不会切回通用执行器口吻
+- `<summary>`、失败分析、阶段性汇报是否仍像角色本人，而不是工具日志
 
 ### 7.2 回想验证
 
@@ -568,6 +625,7 @@ L1 只留：
 - 原 GenericAgent 的工程工具链是否还可用
 - 角色化后有没有把工程索引打断
 - `memory/skills/` 是否真的可检索、可读、可复用
+- `memory/skills/*.md` 是否已经从“通用 SOP”变成“角色习术档案”，同时不丢技术约束
 
 ### 7.4 记忆污染验证
 
@@ -594,6 +652,14 @@ L1 只留：
 
 - 角色味重了
 - 但 GA 原本的能力残废了
+
+### 错误 2.1：只把工程规则迁位，不改工具协议层
+
+结果：
+
+- `memory/skills/` 看起来已经角色化；
+- 但 `<summary>`、失败说明、阶段汇报仍是 GenericAgent 裸报告体；
+- 一进入 tools 场景，角色立刻出戏。
 
 ### 错误 3：把剧情细节堆进 L2
 
@@ -658,6 +724,7 @@ L1 只留：
 如果你想看一个已成型的实例，请优先读：
 
 - `GenericAgent_LDY/assets/sys_prompt.txt`
+- `GenericAgent_LDY/ga.py`
 - `GenericAgent_LDY/memory/memory_management_sop.md`
 - `GenericAgent_LDY/memory/global_mem.txt`
 - `GenericAgent_LDY/memory/global_mem_insight.txt`
@@ -670,6 +737,7 @@ L1 只留：
 - `GenericAgent_LDY/scripts/rebuild_canon_l4.py`
 - `GenericAgent_LDY/scripts/rebuild_daiyu_memory.py`
 - `GenericAgent_LDY/scripts/eval_daiyu_recall.py`
+- `compare_lab/README.md`
 - `GenericAgent_LDY/README.md`
 
 这些文件合起来就是：
@@ -694,6 +762,11 @@ L1 只留：
 5. 角色能回想，而不是只会模仿语气；
 6. 知情边界清楚；
 7. 回想和新世界成长不会污染原生生命史。
+
+如果还想把角色 Agent 与通用 Agent 做行为对比，还应再满足：
+
+8. 角色差异不只体现在聊天措辞，也能在 tool-use probe、策略场景等行为任务里被观察出来；
+9. 使用 tools 时，角色不会退化成一个没有人格的报告生成器。
 
 ---
 

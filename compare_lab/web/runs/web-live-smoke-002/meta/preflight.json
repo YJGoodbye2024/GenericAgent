@@ -1,0 +1,20 @@
+{
+  "outside_sandbox_required": true,
+  "browser_bin": "/usr/bin/google-chrome",
+  "sides": {
+    "generic": {
+      "ok": false,
+      "model_name": "minimax-m2.7",
+      "response_excerpt": "LLM Running (Turn 1) ... <summary>检查浏览器标签页可用性</summary> 🛠️ web_scan({\"tabs_only\": true}) LLM Running (Turn 2) ... <summary>Web扫描失败，缺少依赖模块</summary> 当前无法使用浏览器工具，错误原因： > **ModuleNotFoundError: No module named 'simple_websocket_server'** `t...",
+      "session_count": 0,
+      "error": "browser_bridge_not_ready"
+    },
+    "lin_daiyu": {
+      "ok": false,
+      "model_name": "minimax-m2.7",
+      "response_excerpt": "LLM Running (Turn 1) ... <summary>立即探测浏览器标签页状态</summary> 🛠️ web_scan({\"tabs_only\": true}) LLM Running (Turn 2) ... <summary>缺模块 simple_websocket_server，先查环境与依赖状态</summary> 🛠️ code_run({\"script\": \"pip install simple-websocket-server 2>&1 ...",
+      "session_count": 0,
+      "error": "browser_bridge_not_ready"
+    }
+  }
+}

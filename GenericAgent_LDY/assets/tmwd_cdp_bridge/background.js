@@ -1,4 +1,9 @@
 // background.js - Cookie + CDP Bridge
+try { importScripts('config.js'); } catch (_) {}
+const TMWD_HOST = (typeof self !== 'undefined' && self.TMWD_HOST) ? self.TMWD_HOST : '127.0.0.1';
+const TMWD_PORT = (typeof self !== 'undefined' && self.TMWD_PORT) ? self.TMWD_PORT : 18765;
+const TMWD_WS_URL = `ws://${TMWD_HOST}:${TMWD_PORT}`;
+const TMWD_HTTP_BASE = `http://${TMWD_HOST}:${TMWD_PORT + 1}`;
 chrome.runtime.onInstalled.addListener(() => {
   console.log('CDP Bridge installed');
   // Strip CSP headers to allow eval/inline scripts
@@ -189,7 +194,7 @@ function buildCdpScript(code) {
 
 // --- WebSocket Client for TMWebDriver ---
 let ws = null;
-const WS_URL = 'ws://127.0.0.1:18765';
+const WS_URL = TMWD_WS_URL;
 
 function scheduleProbe() {
   // Use chrome.alarms to survive MV3 service worker suspension
@@ -205,7 +210,7 @@ async function isServerAlive() {
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 2000);
-    await fetch('http://127.0.0.1:18765', { signal: ctrl.signal });
+    await fetch(TMWD_HTTP_BASE, { signal: ctrl.signal });
     return true; // Got HTTP response → port is listening
   } catch (e) {
     return false; // Network error (connection refused) or timeout → server not alive

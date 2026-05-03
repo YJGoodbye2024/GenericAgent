@@ -96,6 +96,27 @@ def compare_memory_dirs(before_dir: Path, after_dir: Path) -> str:
     return "".join(chunks)
 
 
+def list_changed_memory_files(before_dir: Path, after_dir: Path) -> list[str]:
+    rels = set()
+    for root in (before_dir, after_dir):
+        for path in root.rglob("*"):
+            if path.is_file() and path.name not in MEMORY_DIFF_EXCLUDE:
+                rels.add(path.relative_to(root).as_posix())
+
+    changed: list[str] = []
+    for rel in sorted(rels):
+        before = before_dir / rel
+        after = after_dir / rel
+        if before.exists() != after.exists():
+            changed.append(rel)
+            continue
+        if not before.exists() or not after.exists():
+            continue
+        if before.read_text(encoding="utf-8", errors="replace") != after.read_text(encoding="utf-8", errors="replace"):
+            changed.append(rel)
+    return changed
+
+
 def purge_modules() -> None:
     for name in MODULE_PURGE:
         sys.modules.pop(name, None)
